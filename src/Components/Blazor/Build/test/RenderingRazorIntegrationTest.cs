@@ -291,37 +291,6 @@ namespace Microsoft.AspNetCore.Blazor.Build.Test
         }
 
         [Fact]
-        public void SupportsAttributesWithEventHandlerValues()
-        {
-            // Arrange/Act
-            var component = CompileToComponent(
-                @"<elem attr=@MyHandleEvent />
-                @code {
-                    public bool HandlerWasCalled { get; set; } = false;
-
-                    void MyHandleEvent(Microsoft.AspNetCore.Components.UIEventArgs eventArgs)
-                    {
-                        HandlerWasCalled = true;
-                    }
-                }");
-            var handlerWasCalledProperty = component.GetType().GetProperty("HandlerWasCalled");
-
-            // Assert
-            Assert.False((bool)handlerWasCalledProperty.GetValue(component));
-            Assert.Collection(GetRenderTree(component),
-                frame => AssertFrame.Element(frame, "elem", 2, 0),
-                frame =>
-                {
-                    Assert.Equal(RenderTreeFrameType.Attribute, frame.FrameType);
-                    Assert.Equal(1, frame.Sequence);
-                    Assert.NotNull(frame.AttributeValue);
-
-                    ((Action<UIEventArgs>)frame.AttributeValue)(null);
-                    Assert.True((bool)handlerWasCalledProperty.GetValue(component));
-                });
-        }
-
-        [Fact]
         public void SupportsUsingStatements()
         {
             // Arrange/Act
@@ -483,15 +452,14 @@ namespace Microsoft.AspNetCore.Blazor.Build.Test
         {
             // Arrange
             var component = CompileToComponent(@"
-<button @onclick=""function(){console.log('hello');};"" />");
+<button onclick=""function(){console.log('hello');};"" />");
 
             // Act
             var frames = GetRenderTree(component);
 
             // Assert
             Assert.Collection(frames,
-                frame => AssertFrame.Element(frame, "button", 2, 0),
-                frame => AssertFrame.Attribute(frame, "onclick", "function(){console.log('hello');};", 1));
+                frame => AssertFrame.Markup(frame, "<button onclick=\"function(){console.log('hello');};\"></button>", 0));
         }
 
         [Fact]
@@ -499,7 +467,7 @@ namespace Microsoft.AspNetCore.Blazor.Build.Test
         {
             // Arrange
             var component = CompileToComponent(@"
-<button @onclick=""@(x => Clicked = true)"" />
+<button @onclick=""x => Clicked = true"" />
 @code {
     public bool Clicked { get; set; }
 }");
@@ -531,7 +499,7 @@ namespace Microsoft.AspNetCore.Blazor.Build.Test
         {
             // Arrange
             var component = CompileToComponent(@"
-<button @onclick=""@OnClick"" />
+<button @onclick=""OnClick"" />
 @code {
     public void OnClick(UIMouseEventArgs e) { Clicked = true; }
     public bool Clicked { get; set; }

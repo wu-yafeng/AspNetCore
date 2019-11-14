@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.RenderTree;
 using Microsoft.AspNetCore.Components.Test.Helpers;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
@@ -254,7 +255,7 @@ namespace Microsoft.AspNetCore.Components.Test
 
             // Act
             builder.OpenElement(0, "myelement");
-            builder.AddMultipleAttributes<object>(0, null);
+            builder.AddMultipleAttributes(0, null);
             builder.CloseElement();
 
             // Assert
@@ -308,20 +309,6 @@ namespace Microsoft.AspNetCore.Components.Test
         }
 
         [Fact]
-        public void CanAddMultipleAttributes_DictionaryString()
-        {
-            var attributes = new Dictionary<string, string>
-            {
-                { "attribute1", "test1" },
-                { "attribute2", "123" },
-                { "attribute3", "456" },
-            };
-
-            // Act & Assert
-            CanAddMultipleAttributesTest(attributes);
-        }
-
-        [Fact]
         public void CanAddMultipleAttributes_DictionaryObject()
         {
             var attributes = new Dictionary<string, object>
@@ -333,20 +320,6 @@ namespace Microsoft.AspNetCore.Components.Test
 
             // Act & Assert
             CanAddMultipleAttributesTest(attributes);
-        }
-
-        [Fact]
-        public void CanAddMultipleAttributes_IReadOnlyDictionaryString()
-        {
-            var attributes = new Dictionary<string, string>
-            {
-                { "attribute1", "test1" },
-                { "attribute2", "123" },
-                { "attribute3", "456" },
-            };
-
-            // Act & Assert
-            CanAddMultipleAttributesTest((IReadOnlyDictionary<string, string>)attributes);
         }
 
         [Fact]
@@ -364,20 +337,6 @@ namespace Microsoft.AspNetCore.Components.Test
         }
 
         [Fact]
-        public void CanAddMultipleAttributes_ListKvpString()
-        {
-            var attributes = new List<KeyValuePair<string, object>>()
-            {
-                new KeyValuePair<string, object>("attribute1", "test1"),
-                new KeyValuePair<string, object>("attribute2", "123"),
-                new KeyValuePair<string, object>("attribute3", "456"),
-            };
-
-            // Act & Assert
-            CanAddMultipleAttributesTest(attributes);
-        }
-
-        [Fact]
         public void CanAddMultipleAttributes_ListKvpObject()
         {
             var attributes = new List<KeyValuePair<string, object>>()
@@ -385,20 +344,6 @@ namespace Microsoft.AspNetCore.Components.Test
                 new KeyValuePair<string, object>("attribute1", "test1"),
                 new KeyValuePair<string, object>("attribute2", "123"),
                 new KeyValuePair<string, object>("attribute3", true),
-            };
-
-            // Act & Assert
-            CanAddMultipleAttributesTest(attributes);
-        }
-
-        [Fact]
-        public void CanAddMultipleAttributes_ArrayKvpString()
-        {
-            var attributes = new KeyValuePair<string, string>[]
-            {
-                new KeyValuePair<string, string>("attribute1", "test1"),
-                new KeyValuePair<string, string>("attribute2", "123"),
-                new KeyValuePair<string, string>("attribute3", "456"),
             };
 
             // Act & Assert
@@ -419,7 +364,7 @@ namespace Microsoft.AspNetCore.Components.Test
             CanAddMultipleAttributesTest(attributes);
         }
 
-        private void CanAddMultipleAttributesTest<T>(IEnumerable<KeyValuePair<string, T>> attributes)
+        private void CanAddMultipleAttributesTest(IEnumerable<KeyValuePair<string, object>> attributes)
         {
             // Arrange
             var builder = new RenderTreeBuilder(new TestRenderer());
@@ -454,7 +399,7 @@ namespace Microsoft.AspNetCore.Components.Test
         }
 
         [Fact]
-        public void CannotAddEventHandlerAttributeAtRoot()
+        public void CannotDelegateAttributeAtRoot()
         {
             // Arrange
             var builder = new RenderTreeBuilder(new TestRenderer());
@@ -462,7 +407,7 @@ namespace Microsoft.AspNetCore.Components.Test
             // Act/Assert
             Assert.Throws<InvalidOperationException>(() =>
             {
-                builder.AddAttribute(0, "name", eventInfo => { });
+                builder.AddAttribute(0, "name", new Action<UIEventArgs>(eventInfo => { }));
             });
         }
 
@@ -492,7 +437,7 @@ namespace Microsoft.AspNetCore.Components.Test
             {
                 builder.OpenElement(0, "some element");
                 builder.AddContent(1, "hello");
-                builder.AddAttribute(2, "name", eventInfo => { });
+                builder.AddAttribute(2, "name", new Action<UIEventArgs>(eventInfo => { }));
             });
         }
 
@@ -1850,7 +1795,7 @@ namespace Microsoft.AspNetCore.Components.Test
 
         private class TestRenderer : Renderer
         {
-            public TestRenderer() : base(new TestServiceProvider(), new RendererSynchronizationContext())
+            public TestRenderer() : base(new TestServiceProvider(), NullLoggerFactory.Instance, new RendererSynchronizationContext())
             {
             }
 

@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components.RenderTree;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Components.Rendering
 {
@@ -14,13 +15,15 @@ namespace Microsoft.AspNetCore.Components.Rendering
     /// Provides mechanisms for rendering hierarchies of <see cref="IComponent"/> instances,
     /// dispatching events to them, and notifying when the user interface is being updated.
     /// </summary>
-    public abstract class Renderer : IDisposable
+    public abstract partial class Renderer : IDisposable
     {
         private readonly ComponentFactory _componentFactory;
         private readonly Dictionary<int, ComponentState> _componentStateById = new Dictionary<int, ComponentState>();
         private readonly RenderBatchBuilder _batchBuilder = new RenderBatchBuilder();
         private readonly Dictionary<int, EventCallback> _eventBindings = new Dictionary<int, EventCallback>();
+        private readonly Dictionary<int, int> _eventHandlerIdReplacements = new Dictionary<int, int>();
         private readonly IDispatcher _dispatcher;
+        private readonly ILogger<Renderer> _logger;
 
         private int _nextComponentId = 0; // TODO: change to 'long' when Mono .NET->JS interop supports it
         private bool _isBatchInProgress;
@@ -54,19 +57,33 @@ namespace Microsoft.AspNetCore.Components.Rendering
         /// Constructs an instance of <see cref="Renderer"/>.
         /// </summary>
         /// <param name="serviceProvider">The <see cref="IServiceProvider"/> to be used when initializing components.</param>
-        public Renderer(IServiceProvider serviceProvider)
+        /// <param name="loggerFactory">The <see cref="ILoggerFactory"/>.</param>
+        public Renderer(IServiceProvider serviceProvider, ILoggerFactory loggerFactory)
         {
+            if (serviceProvider is null)
+            {
+                throw new ArgumentNullException(nameof(serviceProvider));
+            }
+
+            if (loggerFactory is null)
+            {
+                throw new ArgumentNullException(nameof(loggerFactory));
+            }
+
             _componentFactory = new ComponentFactory(serviceProvider);
+            _logger = loggerFactory.CreateLogger<Renderer>();
         }
 
         /// <summary>
         /// Constructs an instance of <see cref="Renderer"/>.
         /// </summary>
         /// <param name="serviceProvider">The <see cref="IServiceProvider"/> to be used when initializing components.</param>
+        /// <param name="loggerFactory">The <see cref="ILoggerFactory"/>.</param>
         /// <param name="dispatcher">The <see cref="IDispatcher"/> to be for invoking user actions into the <see cref="Renderer"/> context.</param>
-        public Renderer(IServiceProvider serviceProvider, IDispatcher dispatcher) : this(serviceProvider)
+        public Renderer(IServiceProvider serviceProvider, ILoggerFactory loggerFactory, IDispatcher dispatcher)
+            : this(serviceProvider, loggerFactory)
         {
-            _dispatcher = dispatcher;
+            _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         }
 
         /// <summary>
@@ -188,6 +205,7 @@ namespace Microsoft.AspNetCore.Components.Rendering
             var componentId = _nextComponentId++;
             var parentComponentState = GetOptionalComponentState(parentComponentId);
             var componentState = new ComponentState(this, componentId, component, parentComponentState);
+            Log.InitializingComponent(_logger, componentState, parentComponentState);
             _componentStateById.Add(componentId, componentState);
             component.Configure(new RenderHandle(this, componentId));
             return componentState;
@@ -205,17 +223,26 @@ namespace Microsoft.AspNetCore.Components.Rendering
         /// </summary>
         /// <param name="eventHandlerId">The <see cref="RenderTreeFrame.AttributeEventHandlerId"/> value from the original event attribute.</param>
         /// <param name="eventArgs">Arguments to be passed to the event handler.</param>
+        /// <param name="fieldInfo">Information that the renderer can use to update the state of the existing render tree to match the UI.</param>
         /// <returns>
         /// A <see cref="Task"/> which will complete once all asynchronous processing related to the event
         /// has completed.
         /// </returns>
-        public virtual Task DispatchEventAsync(int eventHandlerId, UIEventArgs eventArgs)
+        public virtual Task DispatchEventAsync(int eventHandlerId, EventFieldInfo fieldInfo, UIEventArgs eventArgs)
         {
             EnsureSynchronizationContext();
 
             if (!_eventBindings.TryGetValue(eventHandlerId, out var callback))
             {
                 throw new ArgumentException($"There is no event handler with ID {eventHandlerId}");
+            }
+
+            Log.HandlingEvent(_logger, eventHandlerId, eventArgs);
+
+            if (fieldInfo != null)
+            {
+                var latestEquivalentEventHandlerId = FindLatestEventHandlerIdInChain(eventHandlerId);
+                UpdateRenderTreeToMatchClientState(latestEquivalentEventHandlerId, fieldInfo);
             }
 
             Task task = null;
@@ -250,7 +277,7 @@ namespace Microsoft.AspNetCore.Components.Rendering
         /// synchronization context.
         /// </summary>
         /// <param name="workItem">The work item to execute.</param>
-        public virtual Task Invoke(Action workItem)
+        public virtual Task InvokeAsync(Action workItem)
         {
             // This is for example when we run on a system with a single thread, like WebAssembly.
             if (_dispatcher == null)
@@ -268,7 +295,7 @@ namespace Microsoft.AspNetCore.Components.Rendering
             }
             else
             {
-                return _dispatcher.Invoke(workItem);
+                return _dispatcher.InvokeAsync(workItem);
             }
         }
 
@@ -399,6 +426,24 @@ namespace Microsoft.AspNetCore.Components.Rendering
             {
                 ProcessRenderQueue();
             }
+        }
+
+        internal void TrackReplacedEventHandlerId(int oldEventHandlerId, int newEventHandlerId)
+        {
+            // Tracking the chain of old->new replacements allows us to interpret incoming EventFieldInfo
+            // values even if they refer to an event handler ID that's since been superseded. This is essential
+            // for tree patching to work in an async environment.
+            _eventHandlerIdReplacements.Add(oldEventHandlerId, newEventHandlerId);
+        }
+
+        private int FindLatestEventHandlerIdInChain(int eventHandlerId)
+        {
+            while (_eventHandlerIdReplacements.TryGetValue(eventHandlerId, out var replacementEventHandlerId))
+            {
+                eventHandlerId = replacementEventHandlerId;
+            }
+
+            return eventHandlerId;
         }
 
         private void EnsureSynchronizationContext()
@@ -587,14 +632,17 @@ namespace Microsoft.AspNetCore.Components.Rendering
 
         private void RenderInExistingBatch(RenderQueueEntry renderQueueEntry)
         {
-            renderQueueEntry.ComponentState
-                .RenderIntoBatch(_batchBuilder, renderQueueEntry.RenderFragment);
+            var componentState = renderQueueEntry.ComponentState;
+            Log.RenderingComponent(_logger, componentState);
+            componentState.RenderIntoBatch(_batchBuilder, renderQueueEntry.RenderFragment);
 
             // Process disposal queue now in case it causes further component renders to be enqueued
             while (_batchBuilder.ComponentDisposalQueue.Count > 0)
             {
                 var disposeComponentId = _batchBuilder.ComponentDisposalQueue.Dequeue();
-                GetRequiredComponentState(disposeComponentId).DisposeInBatch(_batchBuilder);
+                var disposeComponentState = GetRequiredComponentState(disposeComponentId);
+                Log.DisposingComponent(_logger, disposeComponentState);
+                disposeComponentState.DisposeInBatch(_batchBuilder);
                 _componentStateById.Remove(disposeComponentId);
                 _batchBuilder.DisposedComponentIds.Append(disposeComponentId);
             }
@@ -613,7 +661,9 @@ namespace Microsoft.AspNetCore.Components.Rendering
                 var count = eventHandlerIds.Count;
                 for (var i = 0; i < count; i++)
                 {
-                    _eventBindings.Remove(array[i]);
+                    var eventHandlerIdToRemove = array[i];
+                    _eventBindings.Remove(eventHandlerIdToRemove);
+                    _eventHandlerIdReplacements.Remove(eventHandlerIdToRemove);
                 }
             }
             else
@@ -662,6 +712,18 @@ namespace Microsoft.AspNetCore.Components.Rendering
             }
         }
 
+        private void UpdateRenderTreeToMatchClientState(int eventHandlerId, EventFieldInfo fieldInfo)
+        {
+            var componentState = GetOptionalComponentState(fieldInfo.ComponentId);
+            if (componentState != null)
+            {
+                RenderTreeUpdater.UpdateToMatchClientState(
+                    componentState.CurrrentRenderTree,
+                    eventHandlerId,
+                    fieldInfo.FieldValue);
+            }
+        }
+
         /// <summary>
         /// Releases all resources currently used by this <see cref="Renderer"/> instance.
         /// </summary>
@@ -670,6 +732,8 @@ namespace Microsoft.AspNetCore.Components.Rendering
         {
             foreach (var componentState in _componentStateById.Values)
             {
+                Log.DisposingComponent(_logger, componentState);
+
                 if (componentState.Component is IDisposable disposable)
                 {
                     try

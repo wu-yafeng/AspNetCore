@@ -226,23 +226,6 @@ namespace Microsoft.AspNetCore.Components.RenderTree
 
         /// <summary>
         /// <para>
-        /// Appends a frame representing an <see cref="Action{UIEventArgs}"/>-valued attribute.
-        /// </para>
-        /// <para>
-        /// The attribute is associated with the most recently added element. If the value is <c>null</c> and the
-        /// current element is not a component, the frame will be omitted.
-        /// </para>
-        /// </summary>
-        /// <param name="sequence">An integer that represents the position of the instruction in the source code.</param>
-        /// <param name="name">The name of the attribute.</param>
-        /// <param name="value">The value of the attribute.</param>
-        public void AddAttribute(int sequence, string name, Action<UIEventArgs> value)
-        {
-            AddAttribute(sequence, name, (MulticastDelegate)value);
-        }
-
-        /// <summary>
-        /// <para>
         /// Appends a frame representing a <see cref="Func{Task}"/>-valued attribute.
         /// </para>
         /// <para>
@@ -260,23 +243,6 @@ namespace Microsoft.AspNetCore.Components.RenderTree
 
         /// <summary>
         /// <para>
-        /// Appends a frame representing a <see cref="Func{UIEventArgs, Task}"/>-valued attribute.
-        /// </para>
-        /// <para>
-        /// The attribute is associated with the most recently added element. If the value is <c>null</c> and the
-        /// current element is not a component, the frame will be omitted.
-        /// </para>
-        /// </summary>
-        /// <param name="sequence">An integer that represents the position of the instruction in the source code.</param>
-        /// <param name="name">The name of the attribute.</param>
-        /// <param name="value">The value of the attribute.</param>
-        public void AddAttribute(int sequence, string name, Func<UIEventArgs, Task> value)
-        {
-            AddAttribute(sequence, name, (MulticastDelegate)value);
-        }
-
-        /// <summary>
-        /// <para>
         /// Appends a frame representing a delegate-valued attribute.
         /// </para>
         /// <para>
@@ -287,14 +253,6 @@ namespace Microsoft.AspNetCore.Components.RenderTree
         /// <param name="sequence">An integer that represents the position of the instruction in the source code.</param>
         /// <param name="name">The name of the attribute.</param>
         /// <param name="value">The value of the attribute.</param>
-        /// <remarks>
-        /// This method is provided for infrastructure purposes, and is used to be
-        /// <see cref="UIEventArgsRenderTreeBuilderExtensions"/> to provide support for delegates of specific
-        /// types. For a good programming experience when using a custom delegate type, define an
-        /// extension method similar to
-        /// <see cref="UIEventArgsRenderTreeBuilderExtensions.AddAttribute(RenderTreeBuilder, int, string, Action{UIChangeEventArgs})"/>
-        /// that calls this method.
-        /// </remarks>
         public void AddAttribute(int sequence, string name, MulticastDelegate value)
         {
             AssertCanAddAttribute();
@@ -485,19 +443,10 @@ namespace Microsoft.AspNetCore.Components.RenderTree
         /// <summary>
         /// Adds frames representing multiple attributes with the same sequence number.
         /// </summary>
-        /// <typeparam name="T">The attribute value type.</typeparam>
         /// <param name="sequence">An integer that represents the position of the instruction in the source code.</param>
         /// <param name="attributes">A collection of key-value pairs representing attributes.</param>
-        public void AddMultipleAttributes<T>(int sequence, IEnumerable<KeyValuePair<string, T>> attributes)
+        public void AddMultipleAttributes(int sequence, IEnumerable<KeyValuePair<string, object>> attributes)
         {
-            // NOTE: The IEnumerable<KeyValuePair<string, T>> is the simplest way to support a variety of
-            // different types like IReadOnlyDictionary<>, Dictionary<>, and IDictionary<>.
-            //
-            // None of those types are contravariant, and since we want to support attributes having a value
-            // of type object, the simplest thing to do is drop down to IEnumerable<KeyValuePair<>> which
-            // is contravariant. This also gives us things like List<KeyValuePair<>> and KeyValuePair<>[]
-            // for free even though we don't expect those types to be common.
-
             // Calling this up-front just to make sure we validate before mutating anything.
             AssertCanAddAttribute();
 
@@ -514,6 +463,34 @@ namespace Microsoft.AspNetCore.Components.RenderTree
                     AddAttribute(sequence, attribute.Key, attribute.Value);
                 }
             }
+        }
+
+        /// <summary>
+        /// <para>
+        /// Indicates that the preceding attribute represents an event handler
+        /// whose execution updates the attribute with name <paramref name="updatesAttributeName"/>.
+        /// </para>
+        /// <para>
+        /// This information is used by the rendering system to determine whether
+        /// to accept a value update for the other attribute when receiving a
+        /// call to the event handler.
+        /// </para>
+        /// </summary>
+        /// <param name="updatesAttributeName">The name of another attribute whose value can be updated when the event handler is executed.</param>
+        public void SetUpdatesAttributeName(string updatesAttributeName)
+        {
+            if (_entries.Count == 0)
+            {
+                throw new InvalidOperationException("No preceding attribute frame exists.");
+            }
+
+            ref var prevFrame = ref _entries.Buffer[_entries.Count - 1];
+            if (prevFrame.FrameType != RenderTreeFrameType.Attribute)
+            {
+                throw new InvalidOperationException($"Incorrect frame type: '{prevFrame.FrameType}'");
+            }
+
+            prevFrame = prevFrame.WithAttributeEventUpdatesAttributeName(updatesAttributeName);
         }
 
         /// <summary>
@@ -688,6 +665,19 @@ namespace Microsoft.AspNetCore.Components.RenderTree
             _lastNonAttributeFrameType = null;
             _hasSeenAddMultipleAttributes = false;
             _seenAttributeNames?.Clear();
+        }
+
+        // internal because this should only be used during the post-event tree patching logic
+        // It's expensive because it involves copying all the subsequent memory in the array
+        internal void InsertAttributeExpensive(int insertAtIndex, int sequence, string attributeName, object attributeValue)
+        {
+            // Replicate the same attribute omission logic as used elsewhere
+            if ((attributeValue == null) || (attributeValue is bool boolValue && !boolValue))
+            {
+                return;
+            }
+
+            _entries.InsertExpensive(insertAtIndex, RenderTreeFrame.Attribute(sequence, attributeName, attributeValue));
         }
 
         /// <summary>

@@ -6,8 +6,9 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Blazor.Services;
 using Microsoft.AspNetCore.Components;
-using Microsoft.AspNetCore.Components.Browser;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Components.Rendering;
+using Microsoft.Extensions.Logging;
 
 namespace Microsoft.AspNetCore.Blazor.Rendering
 {
@@ -26,8 +27,9 @@ namespace Microsoft.AspNetCore.Blazor.Rendering
         /// Constructs an instance of <see cref="WebAssemblyRenderer"/>.
         /// </summary>
         /// <param name="serviceProvider">The <see cref="IServiceProvider"/> to use when initializing components.</param>
-        public WebAssemblyRenderer(IServiceProvider serviceProvider)
-            : base(serviceProvider)
+        /// <param name="loggerFactory">The <see cref="ILoggerFactory"/>.</param>
+        public WebAssemblyRenderer(IServiceProvider serviceProvider, ILoggerFactory loggerFactory)
+            : base(serviceProvider, loggerFactory)
         {
             // The browser renderer registers and unregisters itself with the static
             // registry. This works well with the WebAssembly runtime, and is simple for the
@@ -116,7 +118,7 @@ namespace Microsoft.AspNetCore.Blazor.Rendering
         }
 
         /// <inheritdoc />
-        public override Task DispatchEventAsync(int eventHandlerId, UIEventArgs eventArgs)
+        public override Task DispatchEventAsync(int eventHandlerId, EventFieldInfo eventFieldInfo, UIEventArgs eventArgs)
         {
             // Be sure we only run one event handler at once. Although they couldn't run
             // simultaneously anyway (there's only one thread), they could run nested on
@@ -135,7 +137,7 @@ namespace Microsoft.AspNetCore.Blazor.Rendering
 
             if (isDispatchingEvent)
             {
-                var info = new IncomingEventInfo(eventHandlerId, eventArgs);
+                var info = new IncomingEventInfo(eventHandlerId, eventFieldInfo, eventArgs);
                 deferredIncomingEvents.Enqueue(info);
                 return info.TaskCompletionSource.Task;
             }
@@ -144,7 +146,7 @@ namespace Microsoft.AspNetCore.Blazor.Rendering
                 try
                 {
                     isDispatchingEvent = true;
-                    return base.DispatchEventAsync(eventHandlerId, eventArgs);
+                    return base.DispatchEventAsync(eventHandlerId, eventFieldInfo, eventArgs);
                 }
                 finally
                 {
@@ -168,7 +170,7 @@ namespace Microsoft.AspNetCore.Blazor.Rendering
 
             try
             {
-                await DispatchEventAsync(info.EventHandlerId, info.EventArgs);
+                await DispatchEventAsync(info.EventHandlerId, info.EventFieldInfo, info.EventArgs);
                 taskCompletionSource.SetResult(null);
             }
             catch (Exception ex)
@@ -180,12 +182,14 @@ namespace Microsoft.AspNetCore.Blazor.Rendering
         readonly struct IncomingEventInfo
         {
             public readonly int EventHandlerId;
+            public readonly EventFieldInfo EventFieldInfo;
             public readonly UIEventArgs EventArgs;
             public readonly TaskCompletionSource<object> TaskCompletionSource;
 
-            public IncomingEventInfo(int eventHandlerId, UIEventArgs eventArgs)
+            public IncomingEventInfo(int eventHandlerId, EventFieldInfo eventFieldInfo, UIEventArgs eventArgs)
             {
                 EventHandlerId = eventHandlerId;
+                EventFieldInfo = eventFieldInfo;
                 EventArgs = eventArgs;
                 TaskCompletionSource = new TaskCompletionSource<object>();
             }

@@ -62,13 +62,12 @@ namespace Microsoft.AspNetCore.Components.Forms
         protected override void BuildRenderTree(RenderTreeBuilder builder)
         {
             builder.OpenElement(0, "input");
-            builder.AddMultipleAttributes(1, AdditionalAttributes);
-            builder.AddAttribute(2, "type", "number");
-            builder.AddAttribute(3, "step", _stepAttributeValue);
-            builder.AddAttribute(4, "id", Id);
-            builder.AddAttribute(5, "class", CssClass);
-            builder.AddAttribute(6, "value", BindMethods.GetValue(CurrentValueAsString));
-            builder.AddAttribute(7, "onchange", BindMethods.SetValueHandler(__value => CurrentValueAsString = __value, CurrentValueAsString));
+            builder.AddAttribute(1, "step", _stepAttributeValue); // Before the splat so the user can override
+            builder.AddMultipleAttributes(2, AdditionalAttributes);
+            builder.AddAttribute(3, "type", "number");
+            builder.AddAttribute(4, "class", CssClass);
+            builder.AddAttribute(5, "value", BindMethods.GetValue(CurrentValueAsString));
+            builder.AddAttribute(6, "onchange", EventCallback.Factory.CreateBinder<string>(this, __value => CurrentValueAsString = __value, CurrentValueAsString));
             builder.CloseElement();
         }
 
@@ -84,6 +83,39 @@ namespace Microsoft.AspNetCore.Components.Forms
             {
                 validationErrorMessage = string.Format(ParsingErrorMessage, FieldIdentifier.FieldName);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Formats the value as a string. Derived classes can override this to determine the formating used for <c>CurrentValueAsString</c>.
+        /// </summary>
+        /// <param name="value">The value to format.</param>
+        /// <returns>A string representation of the value.</returns>
+        protected override string FormatValueAsString(T value)
+        {
+            // Avoiding a cast to IFormattable to avoid boxing.
+            switch (value)
+            {
+                case null:
+                    return null;
+
+                case int @int:
+                    return @int.ToString(CultureInfo.InvariantCulture);
+
+                case long @long:
+                    return @long.ToString(CultureInfo.InvariantCulture);
+
+                case float @float:
+                    return @float.ToString(CultureInfo.InvariantCulture);
+
+                case double @double:
+                    return @double.ToString(CultureInfo.InvariantCulture);
+
+                case decimal @decimal:
+                    return @decimal.ToString(CultureInfo.InvariantCulture);
+
+                default:
+                    throw new InvalidOperationException($"Unsupported type {value.GetType()}");
             }
         }
 

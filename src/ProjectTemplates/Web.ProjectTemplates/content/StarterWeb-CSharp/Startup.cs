@@ -52,12 +52,6 @@ namespace Company.WebApplication1
         // This method gets called by the runtime. Use this method to add services to the container.
         public void ConfigureServices(IServiceCollection services)
         {
-            services.Configure<CookiePolicyOptions>(options =>
-            {
-                // This lambda determines whether user consent for non-essential cookies is needed for a given request.
-                options.CheckConsentNeeded = context => true;
-            });
-
 #if (IndividualLocalAuth)
             services.AddDbContext<ApplicationDbContext>(options =>
 #if (UseLocalDB)
@@ -67,7 +61,7 @@ namespace Company.WebApplication1
                 options.UseSqlite(
                     Configuration.GetConnectionString("DefaultConnection")));
 #endif
-            services.AddDefaultIdentity<IdentityUser>()
+            services.AddDefaultIdentity<IdentityUser>(options => options.SignIn.RequireConfirmedAccount = true)
                 .AddEntityFrameworkStores<ApplicationDbContext>();
 #elif (OrganizationalAuth)
             services.AddAuthentication(AzureADDefaults.AuthenticationScheme)
@@ -113,8 +107,8 @@ namespace Company.WebApplication1
             services.AddAuthentication(AzureADB2CDefaults.AuthenticationScheme)
                 .AddAzureADB2C(options => Configuration.Bind("AzureAdB2C", options));
 #endif
-
 #if (OrganizationalAuth)
+
             services.AddControllersWithViews(options =>
             {
                 var policy = new AuthorizationPolicyBuilder()
@@ -125,7 +119,9 @@ namespace Company.WebApplication1
 #else
             services.AddControllersWithViews();
 #endif
-            services.AddRazorPages();
+#if (OrganizationalAuth || IndividualAuth)
+           services.AddRazorPages();
+#endif
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -145,15 +141,11 @@ namespace Company.WebApplication1
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
             }
-
             app.UseHttpsRedirection();
 #else
             }
-
 #endif
             app.UseStaticFiles();
-
-            app.UseCookiePolicy();
 
             app.UseRouting();
 
@@ -167,7 +159,9 @@ namespace Company.WebApplication1
                 endpoints.MapControllerRoute(
                     name: "default",
                     pattern: "{controller=Home}/{action=Index}/{id?}");
+#if (OrganizationalAuth || IndividualAuth)
                 endpoints.MapRazorPages();
+#endif
             });
         }
     }
